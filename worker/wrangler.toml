@@ -15,7 +15,7 @@ LINKEDIN_API_VERSION = "202610"
 [[d1_databases]]
 binding = "DB"
 database_name = "social-os-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "c6398a9a-3a1a-4f57-add8-901b2e807bad"
 
 # R2 is free-tier but requires a payment method on the Cloudflare account to enable.
 # Platforms can only fetch media from a public URL (r2.dev or a custom domain).
