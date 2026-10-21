@@ -1,0 +1,24 @@
+name = "master-social-os-worker"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# */15 publishes due posts; the daily 02:00 UTC run recovers posts stuck in 'publishing'.
+# Metrics are not pulled by cron: LinkedIn member-post analytics need restricted API access,
+# so metrics are ingested via POST /api/metrics (from exported CSVs).
+[triggers]
+crons = ["*/15 * * * *", "0 2 * * *"]
+
+[vars]
+# LinkedIn versions sunset after ~12 months; bump this when LinkedIn announces a sunset.
+LINKEDIN_API_VERSION = "202610"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "social-os-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# R2 is free-tier but requires a payment method on the Cloudflare account to enable.
+# Platforms can only fetch media from a public URL (r2.dev or a custom domain).
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "social-os-media"
