@@ -1,3 +1,5 @@
+import { APP_CSS, APP_HTML, APP_JS } from "./ui";
+
 export interface Env {
   DB: D1Database;
   MEDIA_BUCKET: R2Bucket;
@@ -11,6 +13,22 @@ const FUNNEL_STAGES = ["TOFU_AWARENESS", "MOFU_ENGAGEMENT", "MOFU_TRAFFIC", "BOF
 const PLATFORMS = ["linkedin", "x", "instagram"];
 const FORMATS = ["carousel", "short_video", "static", "text"];
 const METRIC_FIELDS = ["impressions", "unique_reach", "engagement_rate", "saves", "shares", "clicks", "comments"] as const;
+const STATUSES = ["queued", "publishing", "published", "pending_manual", "failed", "cancelled"];
+const POSTS_LIMIT = 500;
+
+// The dashboard shell holds no data; every call it makes goes through the Bearer check below.
+const UI_ASSETS: Record<string, [string, string]> = {
+  "/app": [APP_HTML, "text/html; charset=utf-8"],
+  "/app.js": [APP_JS, "text/javascript; charset=utf-8"],
+  "/app.css": [APP_CSS, "text/css; charset=utf-8"],
+};
+const UI_HEADERS = {
+  "Content-Security-Policy":
+    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Cache-Control": "no-store",
+};
 
 const PUBLISH_CRON = "*/15 * * * *";
 const PUBLISH_BATCH_SIZE = 20; // stays well under the free plan's 50 subrequests per invocation
@@ -20,6 +38,11 @@ type Post = Record<string, any>;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const asset = request.method === "GET" ? UI_ASSETS[new URL(request.url).pathname] : undefined;
+    if (asset) {
+      return new Response(asset[0], { headers: { "Content-Type": asset[1], ...UI_HEADERS } });
+    }
+
     // Fail closed: an unset secret must never turn "Bearer undefined" into a valid key.
     if (!env.API_SECRET_KEY) {
       return Response.json({ error: "API_SECRET_KEY is not configured" }, { status: 500 });
@@ -39,6 +62,11 @@ export default {
       // 2. Fetch metrics for Phase 6 & 7 /social-audit skill
       if (request.method === "GET" && url.pathname === "/api/metrics") {
         return await listMetrics(env);
+      }
+
+      // 2b. List posts for the dashboard, optionally filtered: ?status=queued,failed
+      if (request.method === "GET" && url.pathname === "/api/posts") {
+        return await listPosts(env, url.searchParams.get("status"));
       }
 
       // 3. Ingest metric snapshots (from exported platform CSVs)
@@ -128,17 +156,28 @@ async function queuePost(request: Request, env: Env): Promise<Response> {
   return Response.json({ success: true, postId: id, scheduled_at: scheduled.toISOString() }, { status: 201 });
 }
 
-async function listMetrics(env: Env): Promise<Response> {
-  // One row per post, using its most recent metrics snapshot.
-  const { results } = await env.DB.prepare(
-    `SELECT p.*, m.impressions, m.unique_reach, m.engagement_rate, m.saves, m.shares, m.clicks, m.comments, m.recorded_at
+// One row per post, using its most recent metrics snapshot.
+const POSTS_WITH_LATEST_METRICS = `SELECT p.*, m.impressions, m.unique_reach, m.engagement_rate, m.saves, m.shares, m.clicks, m.comments, m.recorded_at
      FROM scheduled_posts p
      LEFT JOIN post_metrics m ON m.id = (
        SELECT id FROM post_metrics WHERE post_id = p.id ORDER BY recorded_at DESC, id DESC LIMIT 1
-     )
-     ORDER BY p.scheduled_at DESC LIMIT 30`
-  ).all();
+     )`;
+
+async function listMetrics(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(`${POSTS_WITH_LATEST_METRICS} ORDER BY p.scheduled_at DESC LIMIT 30`).all();
   return Response.json({ results });
+}
+
+async function listPosts(env: Env, statusParam: string | null): Promise<Response> {
+  const statuses = statusParam ? statusParam.split(",").map((s) => s.trim()) : [];
+  const invalid = statuses.filter((s) => !STATUSES.includes(s));
+  if (invalid.length > 0) return badRequest(`status must be one or more of ${STATUSES.join(", ")}`);
+
+  const where = statuses.length ? `WHERE p.status IN (${statuses.map(() => "?").join(", ")})` : "";
+  const { results } = await env.DB.prepare(`${POSTS_WITH_LATEST_METRICS} ${where} ORDER BY p.scheduled_at DESC LIMIT ${POSTS_LIMIT}`)
+    .bind(...statuses)
+    .all();
+  return Response.json({ results, limit: POSTS_LIMIT });
 }
 
 async function ingestMetrics(request: Request, env: Env): Promise<Response> {
@@ -200,7 +239,16 @@ async function updatePostStatus(request: Request, env: Env, id: string): Promise
     return Response.json({ success: true });
   }
 
-  return badRequest("status must be 'published' or 'queued'");
+  if (body.status === "cancelled") {
+    // Pull a post back before the cron claims it; the row stays for the audit trail.
+    const res = await env.DB.prepare(`UPDATE scheduled_posts SET status = 'cancelled' WHERE id = ? AND status = 'queued'`)
+      .bind(id)
+      .run();
+    if (res.meta.changes === 0) return badRequest("Post not found or not in queued status");
+    return Response.json({ success: true });
+  }
+
+  return badRequest("status must be 'published', 'queued' or 'cancelled'");
 }
 
 async function publishDuePosts(env: Env) {

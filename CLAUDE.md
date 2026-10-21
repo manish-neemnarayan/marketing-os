@@ -20,20 +20,24 @@
 - `/social-audit` — Pulls post performance from Cloudflare D1 (`post_metrics`), deconstructs winners and losers across the 5 Creative Levers (Phase 5), and updates `context/sprint-hypotheses.md`.
 
 ## 4. Worker API & Post Lifecycle
-All endpoints require `Authorization: Bearer $API_SECRET_KEY`.
+Dashboard: `GET /app` (queue, mark published, retry, cancel, metrics entry). The page itself is public; it asks for the API key and every data call it makes is authenticated.
+
+All `/api/*` endpoints require `Authorization: Bearer $API_SECRET_KEY`.
 - `POST /api/queue` — queue a greenlit post. `scheduled_at` is normalized to ISO-8601 UTC.
 - `GET /api/metrics` — last 30 posts with their latest metrics snapshot.
+- `GET /api/posts?status=queued,failed` — up to 500 posts (optionally filtered by status) with their latest metrics snapshot.
 - `POST /api/metrics` — ingest one row or an array: `{ post_id, impressions, unique_reach, engagement_rate, saves, shares, clicks, comments }`. This is the main metrics path; platform analytics APIs are not pulled automatically.
-- `PATCH /api/posts/:id` — `{ "status": "published", "platform_post_id": "..." }` after posting a `pending_manual`/`failed` post by hand, or `{ "status": "queued" }` to retry a `failed` post.
+- `PATCH /api/posts/:id` — `{ "status": "published", "platform_post_id": "..." }` after posting a `pending_manual`/`failed` post by hand, `{ "status": "queued" }` to retry a `failed` post, or `{ "status": "cancelled" }` to pull back a `queued` post.
 
-Statuses: `queued` → `publishing` → `published` | `pending_manual` | `failed`.
+Statuses: `queued` → `publishing` → `published` | `pending_manual` | `failed`; `queued` → `cancelled`.
 - Only LinkedIn text posts without media are auto-published. Everything else becomes `pending_manual` when due: post it by hand, then PATCH it to `published`.
-- Never treat `pending_manual` posts as live in `/social-audit`.
+- Never treat `pending_manual` or `cancelled` posts as live in `/social-audit`.
 
 ## 5. Commands (run from `worker/`)
 - Auth in cloud sessions: `wrangler login` needs a browser; set `CLOUDFLARE_API_TOKEN` (and `CLOUDFLARE_ACCOUNT_ID`) as environment secrets instead.
 - `npm install` · `npm run typecheck` · `npm run dev` (local, `/__scheduled?cron=...` triggers crons)
 - `npx wrangler d1 create social-os-db` → paste `database_id` into `wrangler.toml` → `npm run db:schema`
+- Existing databases created before the `cancelled` status: `npm run db:migrate:0001` (once; already applied to `social-os-db`).
 - `npx wrangler r2 bucket create social-os-media` (needs R2 enabled on the account; requires a payment method even on the free tier)
 - `npx wrangler secret put API_SECRET_KEY` (optional: `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_AUTHOR_URN`; LinkedIn tokens expire after ~60 days)
 - `npm run deploy`

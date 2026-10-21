@@ -6,7 +6,8 @@
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "db:schema": "wrangler d1 execute social-os-db --remote --file=schema.sql"
+    "db:schema": "wrangler d1 execute social-os-db --remote --file=schema.sql",
+    "db:migrate:0001": "wrangler d1 execute social-os-db --remote --file=migrations/0001_add_cancelled_status.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261001.0",

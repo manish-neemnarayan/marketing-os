@@ -25,8 +25,9 @@ CREATE TABLE IF NOT EXISTS scheduled_posts (
     -- pending_manual : due, but no API publisher for this platform/format; post it by hand,
     --                  then PATCH /api/posts/:id to mark it published
     -- failed      : publish attempt errored, see last_error
+    -- cancelled   : pulled from the queue before publishing; kept for the audit trail
     status TEXT NOT NULL DEFAULT 'queued'
-        CHECK (status IN ('queued', 'publishing', 'published', 'pending_manual', 'failed')),
+        CHECK (status IN ('queued', 'publishing', 'published', 'pending_manual', 'failed', 'cancelled')),
     scheduled_at TEXT NOT NULL,   -- always ISO-8601 UTC (normalized by the Worker)
     claimed_at TEXT,
     published_at TEXT,
